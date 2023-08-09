@@ -1,0 +1,21 @@
+[package]
+name = "lvgl-test"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[features]
+default = ["embedded_graphics","alloc"]
+embedded_graphics = ["embedded-graphics"]
+alloc = ["cstr_core/alloc"]
+
+[dependencies]
+lvgl = { git = "https://github.com/lvgl/lv_binding_rust", branch = "master" }
+lvgl-sys = { git = "https://github.com/lvgl/lv_binding_rust", branch = "master" }
+embedded-graphics = { version = "0.8", optional = true }
+cstr_core = { version = "0.2", default-features = false, features = ["alloc"] }
+embedded-graphics-simulator = "0.5"
+
+[[bin]]
+name = "lvgl-arc"
+path = "src/arc.rs"

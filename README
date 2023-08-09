@@ -1,0 +1,6 @@
+Simple demo with separated screen design and update
+
+
+To compile:
+ * 1st check lvgl-rust dependencies
+ * 2nd run ```clear &&  DEP_LV_CONFIG_PATH=`pwd`/lvgl/config cargo build```
