@@ -11,11 +11,15 @@ use embedded_graphics_simulator::{
 use lvgl;
 use lvgl::style::Style;
 use lvgl::widgets::{Arc, Label};
-use lvgl::{Align, Color, Display, DrawBuffer, LvError, Part, Widget};
+use lvgl::{Align, Color, Display, DrawBuffer, LvError, Part, Screen, Widget};
 use lvgl_sys;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
+
+use std::cell::RefCell;
+
+use core::pin::Pin;
 
 fn mem_info() -> lvgl_sys::lv_mem_monitor_t {
     let mut info = lvgl_sys::lv_mem_monitor_t {
@@ -34,55 +38,88 @@ fn mem_info() -> lvgl_sys::lv_mem_monitor_t {
     info
 }
 
-fn main() -> Result<(), LvError> {
-    const HOR_RES: u32 = 240;
-    const VER_RES: u32 = 240;
+struct DisplayHandle<'a> {
+    pub display: Pin<Box<Display>>,
+    pub arc: RefCell<Arc<'a>>,
+}
+
+fn mk_display() -> Result< Pin<Box<DisplayHandle<'static>> >, LvError> {
+    const HOR_RES: u32 = 800;
+    const VER_RES: u32 = 480;
+    const DISP_BUF_SIZE: u32 = 131072; //128*1024
 
     println!("meminfo init: {:?}", mem_info());
 
     /*LittlevGL init*/
     lvgl::init();
-
     /*Linux frame buffer device init*/
-    lvgl_sys::fbdev_init();
+    unsafe {
+        lvgl_sys::fbdev_init();
+    }
 
-    //let mut sim_display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(HOR_RES, VER_RES));
+    /*Initialize a descriptor for the buffer*/
+    let buffer = DrawBuffer::<{ (DISP_BUF_SIZE) as usize }>::default();
 
-    //let output_settings = OutputSettingsBuilder::new().scale(1).build();
-    //let mut window = Window::new("Arc Example", &output_settings);
-
-    let buffer = DrawBuffer::<{ (HOR_RES * VER_RES) as usize }>::default();
-
-    let display = Display::register(buffer, HOR_RES, VER_RES, |refresh| {
-        //sim_display.draw_iter(refresh.as_pixels()).unwrap();
-    })?;
+    /*Initialize and register a display driver*/
+    let mut display = Box::pin(unsafe {
+        Display::register_raw(
+            buffer,
+            HOR_RES,
+            VER_RES,
+            Some(lvgl_sys::fbdev_flush),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(lvgl_sys::fbdev_exit),
+        )?
+    });
 
     let mut screen = display.get_scr_act()?;
 
-    let mut screen_style = Style::default();
+    let mut screen_style = Box::new(Style::default());
     screen_style.set_bg_color(Color::from_rgb((255, 255, 255)));
     screen_style.set_radius(0);
-    screen.add_style(Part::Main, &mut screen_style)?;
+    screen.add_style(Part::Main, &mut *screen_style);
+
 
     // Create the arc object
     let mut arc = Arc::create(&mut screen)?;
-    arc.set_size(150, 150)?;
-    arc.set_align(Align::Center, 0, 10)?;
+    arc.set_size(150, 150);
+    arc.set_align(Align::Center, 0, 10);
     arc.set_start_angle(135)?;
     arc.set_end_angle(135)?;
 
     let mut loading_lbl = Label::create(&mut screen)?;
     loading_lbl.set_text(CString::new("Loading...").unwrap().as_c_str())?;
-    loading_lbl.set_align(Align::OutTopMid, 0, 0)?;
-    //loading_lbl.set_label_align(LabelAlign::Center)?;
+    loading_lbl.set_align(Align::OutTopMid, 0, 0);
 
     let mut loading_style = Style::default();
     loading_style.set_text_color(Color::from_rgb((0, 0, 0)));
-    loading_lbl.add_style(Part::Main, &mut loading_style)?;
+    loading_lbl.add_style(Part::Main, &mut loading_style);
 
+    let handle = Box::pin(DisplayHandle {
+        display,
+        arc: RefCell::new(arc),
+    });
+    //let handle = Box::leak(handle);
+    //display_update(handle)?;
+
+    Ok(handle)
+}
+
+fn display_update(handle:Pin<Box<DisplayHandle>>) -> Result<(), LvError> {
     let mut angle = 0;
     let mut forward = true;
     let mut i = 0;
+
+    // retrieve mutable arc handle from display handle
+    let mut arc = handle.arc.borrow_mut();
+    //let mut window= handle.window.borrow_mut();
 
     'running: loop {
         let start = Instant::now();
@@ -92,24 +129,29 @@ fn main() -> Result<(), LvError> {
             println!("mem info running: {:?}", mem_info());
         }
         angle = if forward { angle + 1 } else { angle - 1 };
+
         arc.set_end_angle(angle + 135)?;
+        println!("arc.set_end_angle");
         i += 1;
+        println!("i");
 
         lvgl::task_handler();
-        //window.update(&sim_display);
+        println!("lvgl::task_handler");
 
-        /*
-        for event in window.events() {
-            match event {
-                //SimulatorEvent::Quit => break 'running,
-                _ => {}
-            }
-        }
-        */
         sleep(Duration::from_millis(15));
+        println!("Duration::from_millis");
         lvgl::tick_inc(Instant::now().duration_since(start));
-    }
-    println!("meminfo end: {:?}", mem_info());
 
+    }
+}
+
+fn main() -> Result<(), LvError> {
+    let handle = mk_display()?;
+
+    println!("mk_display");
+    // handle.update should be callable from an asynchronous function (i.e. a system timer)
+    display_update(handle)?;
+
+    println!("display_update");
     Ok(())
 }
